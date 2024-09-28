@@ -39,6 +39,7 @@ import (
 	"github.com/drakkan/sftpgo/v2/internal/acme"
 	"github.com/drakkan/sftpgo/v2/internal/common"
 	"github.com/drakkan/sftpgo/v2/internal/dataprovider"
+	"github.com/drakkan/sftpgo/v2/internal/ftpd"
 	"github.com/drakkan/sftpgo/v2/internal/kms"
 	"github.com/drakkan/sftpgo/v2/internal/logger"
 	"github.com/drakkan/sftpgo/v2/internal/mfa"
@@ -46,6 +47,7 @@ import (
 	"github.com/drakkan/sftpgo/v2/internal/smtp"
 	"github.com/drakkan/sftpgo/v2/internal/util"
 	"github.com/drakkan/sftpgo/v2/internal/vfs"
+	"github.com/drakkan/sftpgo/v2/internal/webdavd"
 )
 
 type userPageMode int
@@ -168,7 +170,6 @@ type fsWrapper struct {
 	IsHidden        bool
 	HasUsersBaseDir bool
 	DirPath         string
-	CanSetHomeDir   bool
 }
 
 type userPage struct {
@@ -188,6 +189,7 @@ type userPage struct {
 	Roles              []dataprovider.Role
 	CanImpersonate     bool
 	FsWrapper          fsWrapper
+	CanUseTLSCerts     bool
 }
 
 type adminPage struct {
@@ -515,7 +517,6 @@ func loadAdminTemplates(templatesPath string) {
 
 	fsBaseTpl := template.New("fsBaseTemplate").Funcs(template.FuncMap{
 		"HumanizeBytes": util.ByteCountSI,
-		"IsFsDisabled":  vfs.IsFsDisabled,
 	})
 	usersTmpl := util.LoadTemplate(nil, usersPaths...)
 	userTmpl := util.LoadTemplate(fsBaseTpl, userPaths...)
@@ -964,6 +965,7 @@ func (s *httpdServer) renderUserPage(w http.ResponseWriter, r *http.Request, use
 		Groups:             groups,
 		Roles:              roles,
 		CanImpersonate:     os.Getuid() == 0,
+		CanUseTLSCerts:     ftpd.GetStatus().IsActive || webdavd.GetStatus().IsActive,
 		FsWrapper: fsWrapper{
 			Filesystem:      user.FsConfig,
 			IsUserPage:      true,
@@ -971,7 +973,6 @@ func (s *httpdServer) renderUserPage(w http.ResponseWriter, r *http.Request, use
 			IsHidden:        basePage.LoggedUser.Filters.Preferences.HideFilesystem(),
 			HasUsersBaseDir: dataprovider.HasUsersBaseDir(),
 			DirPath:         user.HomeDir,
-			CanSetHomeDir:   dataprovider.CanSetHomeDir(),
 		},
 	}
 	renderAdminTemplate(w, templateUser, data)
@@ -1057,7 +1058,6 @@ func (s *httpdServer) renderGroupPage(w http.ResponseWriter, r *http.Request, gr
 			IsGroupPage:     true,
 			HasUsersBaseDir: false,
 			DirPath:         group.UserSettings.HomeDir,
-			CanSetHomeDir:   dataprovider.CanSetHomeDir(),
 		},
 	}
 	renderAdminTemplate(w, templateGroup, data)
@@ -1161,7 +1161,6 @@ func (s *httpdServer) renderFolderPage(w http.ResponseWriter, r *http.Request, f
 			IsGroupPage:     false,
 			HasUsersBaseDir: false,
 			DirPath:         folder.MappedPath,
-			CanSetHomeDir:   dataprovider.CanSetHomeDir(),
 		},
 	}
 	renderAdminTemplate(w, templateFolder, data)
