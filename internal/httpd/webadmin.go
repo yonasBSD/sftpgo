@@ -263,6 +263,7 @@ type setupPage struct {
 	HideSupportLink      bool
 	Title                string
 	Branding             UIBranding
+	CheckRedirect        bool
 }
 
 type folderPage struct {
@@ -296,13 +297,14 @@ type rolePage struct {
 
 type eventActionPage struct {
 	basePage
-	Action         dataprovider.BaseEventAction
-	ActionTypes    []dataprovider.EnumMapping
-	FsActions      []dataprovider.EnumMapping
-	HTTPMethods    []string
-	RedactedSecret string
-	Error          *util.I18nError
-	Mode           genericPageMode
+	Action          dataprovider.BaseEventAction
+	ActionTypes     []dataprovider.EnumMapping
+	FsActions       []dataprovider.EnumMapping
+	HTTPMethods     []string
+	EnabledCommands []string
+	RedactedSecret  string
+	Error           *util.I18nError
+	Mode            genericPageMode
 }
 
 type eventRulePage struct {
@@ -1087,14 +1089,15 @@ func (s *httpdServer) renderEventActionPage(w http.ResponseWriter, r *http.Reque
 	}
 
 	data := eventActionPage{
-		basePage:       s.getBasePageData(title, currentURL, w, r),
-		Action:         action,
-		ActionTypes:    dataprovider.EventActionTypes,
-		FsActions:      dataprovider.FsActionTypes,
-		HTTPMethods:    dataprovider.SupportedHTTPActionMethods,
-		RedactedSecret: redactedSecret,
-		Error:          getI18nError(err),
-		Mode:           mode,
+		basePage:        s.getBasePageData(title, currentURL, w, r),
+		Action:          action,
+		ActionTypes:     dataprovider.EventActionTypes,
+		FsActions:       dataprovider.FsActionTypes,
+		HTTPMethods:     dataprovider.SupportedHTTPActionMethods,
+		EnabledCommands: dataprovider.EnabledActionCommands,
+		RedactedSecret:  redactedSecret,
+		Error:           getI18nError(err),
+		Mode:            mode,
 	}
 	renderAdminTemplate(w, templateEventAction, data)
 }
@@ -1981,6 +1984,13 @@ func updateRepeaterFormFields(r *http.Request) {
 			}
 			continue
 		}
+		if hasPrefixAndSuffix(k, "additional_emails[", "][additional_email]") {
+			email := strings.TrimSpace(r.Form.Get(k))
+			if email != "" {
+				r.Form.Add("additional_emails", email)
+			}
+			continue
+		}
 		if hasPrefixAndSuffix(k, "virtual_folders[", "][vfolder_path]") {
 			base, _ := strings.CutSuffix(k, "[vfolder_path]")
 			r.Form.Add("vfolder_path", strings.TrimSpace(r.Form.Get(k)))
@@ -2114,6 +2124,7 @@ func getUserFromPostFields(r *http.Request) (dataprovider.User, error) {
 		Filters: dataprovider.UserFilters{
 			BaseUserFilters:       filters,
 			RequirePasswordChange: r.Form.Get("require_password_change") != "",
+			AdditionalEmails:      r.Form["additional_emails"],
 		},
 		VirtualFolders: getVirtualFoldersFromPostFields(r),
 		FsConfig:       fsConfig,
@@ -3145,9 +3156,9 @@ func (s *httpdServer) handleWebUpdateAdminPost(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if username == claims.Username {
-		if claims.isCriticalPermRemoved(updatedAdmin.Permissions) {
+		if !util.SlicesEqual(admin.Permissions, updatedAdmin.Permissions) {
 			s.renderAddUpdateAdminPage(w, r, &updatedAdmin,
-				util.NewI18nError(errors.New("you cannot remove these permissions to yourself"),
+				util.NewI18nError(errors.New("you cannot change your permissions"),
 					util.I18nErrorAdminSelfPerms,
 				), false)
 			return
@@ -3317,6 +3328,7 @@ func (s *httpdServer) handleWebTemplateUserGet(w http.ResponseWriter, r *http.Re
 			user.SetEmptySecrets()
 			user.PublicKeys = nil
 			user.Email = ""
+			user.Filters.AdditionalEmails = nil
 			user.Description = ""
 			if user.ExpirationDate == 0 && admin.Filters.Preferences.DefaultUsersExpiration > 0 {
 				user.ExpirationDate = util.GetTimeAsMsSinceEpoch(time.Now().Add(24 * time.Hour * time.Duration(admin.Filters.Preferences.DefaultUsersExpiration)))
@@ -3369,7 +3381,7 @@ func (s *httpdServer) handleWebTemplateUserPost(w http.ResponseWriter, r *http.R
 			s.renderMessagePage(w, r, util.I18nTemplateUserTitle, http.StatusBadRequest, err, "")
 			return
 		}
-		// to create a template the "manage_system" permission is required, so role admins cannot use
+		// to create a template the "*" permission is required, so role admins cannot use
 		// this method, we don't need to force the role
 		dump.Users = append(dump.Users, u)
 		for _, folder := range u.VirtualFolders {
@@ -4351,12 +4363,12 @@ func (s *httpdServer) handleWebConfigsPost(w http.ResponseWriter, r *http.Reques
 	case "branding_submit":
 		configSection = 4
 		brandingConfigs, err := getBrandingConfigFromPostFields(r, configs.Branding)
+		configs.Branding = brandingConfigs
 		if err != nil {
 			logger.Info(logSender, "", "unable to get branding config: %v", err)
 			s.renderConfigsPage(w, r, configs, err, configSection)
 			return
 		}
-		configs.Branding = brandingConfigs
 	default:
 		s.renderBadRequestPage(w, r, errors.New("unsupported form action"))
 		return
@@ -4435,6 +4447,9 @@ func (s *httpdServer) handleOAuth2TokenRedirect(w http.ResponseWriter, r *http.R
 }
 
 func updateSMTPSecrets(newConfigs, currentConfigs *dataprovider.SMTPConfigs) {
+	if currentConfigs == nil {
+		currentConfigs = &dataprovider.SMTPConfigs{}
+	}
 	if newConfigs.Password.IsNotPlainAndNotEmpty() {
 		newConfigs.Password = currentConfigs.Password
 	}

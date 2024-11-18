@@ -317,6 +317,13 @@ func uploadUserFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	defer common.Connections.Remove(connection.GetID())
 
+	if err := common.Connections.IsNewTransferAllowed(connection.User.Username); err != nil {
+		connection.Log(logger.LevelInfo, "denying file write due to number of transfer limits")
+		sendAPIResponse(w, r, err, "Denying file write due to transfer count limits",
+			http.StatusConflict)
+		return
+	}
+
 	transferQuota := connection.GetTransferQuota()
 	if !transferQuota.HasUploadSpace() {
 		connection.Log(logger.LevelInfo, "denying file write due to transfer quota limits")
@@ -469,8 +476,9 @@ func getUserProfile(w http.ResponseWriter, r *http.Request) {
 			Description:     user.Description,
 			AllowAPIKeyAuth: user.Filters.AllowAPIKeyAuth,
 		},
-		PublicKeys: user.PublicKeys,
-		TLSCerts:   user.Filters.TLSCerts,
+		AdditionalEmails: user.Filters.AdditionalEmails,
+		PublicKeys:       user.PublicKeys,
+		TLSCerts:         user.Filters.TLSCerts,
 	}
 	render.JSON(w, r, resp)
 }
@@ -508,6 +516,7 @@ func updateUserProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if userMerged.CanChangeInfo() {
 		user.Email = req.Email
+		user.Filters.AdditionalEmails = req.AdditionalEmails
 		user.Description = req.Description
 	}
 	if err := dataprovider.UpdateUser(&user, dataprovider.ActionExecutorSelf, util.GetIPFromRemoteAddress(r.RemoteAddr), user.Role); err != nil {

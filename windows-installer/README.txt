@@ -32,11 +32,11 @@ You can simply replace the configuration file with the default one after updatin
 
 Documentation:
 
-https://sftpgo.github.io/
+https://docs.sftpgo.com/
 
 Commercial support:
 
-https://sftpgo.com/#pricing
+https://sftpgo.com/
 
 Source code:
 

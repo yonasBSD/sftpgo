@@ -49,6 +49,7 @@ import (
 	"github.com/lithammer/shortuuid/v4"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mhale/smtpd"
+	"github.com/pkg/sftp"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"github.com/rs/xid"
@@ -623,6 +624,7 @@ func TestInitialization(t *testing.T) {
 func TestBasicUserHandling(t *testing.T) {
 	u := getTestUser()
 	u.Email = "user@user.com"
+	u.Filters.AdditionalEmails = []string{"email1@user.com", "email2@user.com"}
 	user, resp, err := httpdtest.AddUser(u, http.StatusCreated)
 	assert.NoError(t, err, string(resp))
 	_, resp, err = httpdtest.AddUser(u, http.StatusConflict)
@@ -660,6 +662,12 @@ func TestBasicUserHandling(t *testing.T) {
 		WriteBufferSize: 2,
 	}
 	_, body, err := httpdtest.UpdateUser(user, http.StatusBadRequest, "")
+	assert.NoError(t, err)
+	assert.Contains(t, string(body), "Validation error: email")
+
+	user.Email = ""
+	user.Filters.AdditionalEmails = []string{"invalid@email"}
+	_, body, err = httpdtest.UpdateUser(user, http.StatusBadRequest, "")
 	assert.NoError(t, err)
 	assert.Contains(t, string(body), "Validation error: email")
 
@@ -720,7 +728,7 @@ func TestRoleRelations(t *testing.T) {
 	a.Role = role.Name
 	_, resp, err = httpdtest.AddAdmin(a, http.StatusBadRequest)
 	assert.NoError(t, err)
-	assert.Contains(t, string(resp), "a role admin cannot have the following permissions")
+	assert.Contains(t, string(resp), "a role admin cannot be a super admin")
 
 	a.Permissions = []string{dataprovider.PermAdminAddUsers, dataprovider.PermAdminChangeUsers,
 		dataprovider.PermAdminDeleteUsers, dataprovider.PermAdminViewUsers}
@@ -1832,6 +1840,10 @@ func TestBasicActionRulesHandling(t *testing.T) {
 			},
 		},
 	}
+	dataprovider.EnabledActionCommands = []string{a.Options.CmdConfig.Cmd}
+	defer func() {
+		dataprovider.EnabledActionCommands = nil
+	}()
 	_, _, err = httpdtest.UpdateEventAction(a, http.StatusOK)
 	assert.NoError(t, err)
 	// invalid type
@@ -2366,13 +2378,24 @@ func TestEventActionValidation(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, string(resp), "command is required")
 	action.Options.CmdConfig.Cmd = "relative"
+	dataprovider.EnabledActionCommands = []string{action.Options.CmdConfig.Cmd}
+	defer func() {
+		dataprovider.EnabledActionCommands = nil
+	}()
+
 	_, resp, err = httpdtest.AddEventAction(action, http.StatusBadRequest)
 	assert.NoError(t, err)
 	assert.Contains(t, string(resp), "invalid command, it must be an absolute path")
 	action.Options.CmdConfig.Cmd = filepath.Join(os.TempDir(), "cmd")
 	_, resp, err = httpdtest.AddEventAction(action, http.StatusBadRequest)
 	assert.NoError(t, err)
+	assert.Contains(t, string(resp), "is not allowed")
+
+	dataprovider.EnabledActionCommands = []string{action.Options.CmdConfig.Cmd}
+	_, resp, err = httpdtest.AddEventAction(action, http.StatusBadRequest)
+	assert.NoError(t, err)
 	assert.Contains(t, string(resp), "invalid command action timeout")
+
 	action.Options.CmdConfig.Timeout = 30
 	action.Options.CmdConfig.EnvVars = []dataprovider.KeyValue{
 		{
@@ -2387,6 +2410,17 @@ func TestEventActionValidation(t *testing.T) {
 	_, resp, err = httpdtest.AddEventAction(action, http.StatusBadRequest)
 	assert.NoError(t, err)
 	assert.Contains(t, string(resp), "invalid command args")
+	action.Options.CmdConfig.Args = nil
+	// restrict commands
+	if runtime.GOOS == osWindows {
+		dataprovider.EnabledActionCommands = []string{"C:\\cmd.exe"}
+	} else {
+		dataprovider.EnabledActionCommands = []string{"/bin/sh"}
+	}
+	_, resp, err = httpdtest.AddEventAction(action, http.StatusBadRequest)
+	assert.NoError(t, err)
+	assert.Contains(t, string(resp), "is not allowed")
+	dataprovider.EnabledActionCommands = nil
 
 	action.Type = dataprovider.ActionTypeEmail
 	_, resp, err = httpdtest.AddEventAction(action, http.StatusBadRequest)
@@ -6705,6 +6739,7 @@ func TestCloseActiveConnection(t *testing.T) {
 	_, err = httpdtest.CloseConnection(c.GetID(), http.StatusOK)
 	assert.NoError(t, err)
 	assert.Len(t, common.Connections.GetStats(""), 0)
+	assert.Equal(t, int32(0), common.Connections.GetTotalTransfers())
 }
 
 func TestCloseConnectionAfterUserUpdateDelete(t *testing.T) {
@@ -6737,6 +6772,7 @@ func TestCloseConnectionAfterUserUpdateDelete(t *testing.T) {
 	_, err = httpdtest.RemoveUser(user, http.StatusOK)
 	assert.NoError(t, err)
 	assert.Len(t, common.Connections.GetStats(""), 0)
+	assert.Equal(t, int32(0), common.Connections.GetTotalTransfers())
 }
 
 func TestAdminGenerateRecoveryCodesSaveError(t *testing.T) {
@@ -8822,6 +8858,7 @@ func TestLoaddataMode(t *testing.T) {
 	assert.NoError(t, err)
 	// mode 2 will update the user and close the previous connection
 	assert.Len(t, common.Connections.GetStats(""), 0)
+	assert.Equal(t, int32(0), common.Connections.GetTotalTransfers())
 	user, _, err = httpdtest.GetUserByUsername(user.Username, http.StatusOK)
 	assert.NoError(t, err)
 	assert.Equal(t, oldUploadBandwidth, user.UploadBandwidth)
@@ -11298,6 +11335,7 @@ func TestWebAPIChangeUserProfileMock(t *testing.T) {
 	checkResponseCode(t, http.StatusBadRequest, rr)
 
 	email := "userapi@example.com"
+	additionalEmails := []string{"userapi1@example.com"}
 	description := "user API description"
 	profileReq := make(map[string]any)
 	profileReq["allow_api_key_auth"] = true
@@ -11305,6 +11343,7 @@ func TestWebAPIChangeUserProfileMock(t *testing.T) {
 	profileReq["description"] = description
 	profileReq["public_keys"] = []string{testPubKey, testPubKey1}
 	profileReq["tls_certs"] = []string{httpsCert}
+	profileReq["additional_emails"] = additionalEmails
 	asJSON, err := json.Marshal(profileReq)
 	assert.NoError(t, err)
 	req, err = http.NewRequest(http.MethodPut, userProfilePath, bytes.NewBuffer(asJSON))
@@ -11322,6 +11361,7 @@ func TestWebAPIChangeUserProfileMock(t *testing.T) {
 	err = json.Unmarshal(rr.Body.Bytes(), &profileReq)
 	assert.NoError(t, err)
 	assert.Equal(t, email, profileReq["email"].(string))
+	assert.Len(t, profileReq["additional_emails"].([]interface{}), 1)
 	assert.Equal(t, description, profileReq["description"].(string))
 	assert.True(t, profileReq["allow_api_key_auth"].(bool))
 	val, ok := profileReq["public_keys"].([]any)
@@ -11335,6 +11375,17 @@ func TestWebAPIChangeUserProfileMock(t *testing.T) {
 	// set an invalid email
 	profileReq = make(map[string]any)
 	profileReq["email"] = "notavalidemail"
+	asJSON, err = json.Marshal(profileReq)
+	assert.NoError(t, err)
+	req, err = http.NewRequest(http.MethodPut, userProfilePath, bytes.NewBuffer(asJSON))
+	assert.NoError(t, err)
+	setBearerForReq(req, token)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusBadRequest, rr)
+	assert.Contains(t, rr.Body.String(), "Validation error: email")
+	// set an invalid additional email
+	profileReq = make(map[string]any)
+	profileReq["additional_emails"] = []string{"not an email"}
 	asJSON, err = json.Marshal(profileReq)
 	assert.NoError(t, err)
 	req, err = http.NewRequest(http.MethodPut, userProfilePath, bytes.NewBuffer(asJSON))
@@ -11765,7 +11816,7 @@ func TestUpdateAdminMock(t *testing.T) {
 	assert.Error(t, err)
 	admin := getTestAdmin()
 	admin.Username = altAdminUsername
-	admin.Permissions = []string{dataprovider.PermAdminManageAdmins}
+	admin.Permissions = []string{dataprovider.PermAdminAny}
 	asJSON, err := json.Marshal(admin)
 	assert.NoError(t, err)
 	req, _ := http.NewRequest(http.MethodPost, adminPath, bytes.NewBuffer(asJSON))
@@ -11807,7 +11858,7 @@ func TestUpdateAdminMock(t *testing.T) {
 	setBearerForReq(req, token)
 	rr = executeRequest(req)
 	checkResponseCode(t, http.StatusBadRequest, rr)
-	assert.Contains(t, rr.Body.String(), "you cannot remove these permissions to yourself")
+	assert.Contains(t, rr.Body.String(), "you cannot change your permissions")
 	admin.Permissions = []string{dataprovider.PermAdminAny}
 	admin.Role = "missing role"
 	asJSON, err = json.Marshal(admin)
@@ -11822,7 +11873,7 @@ func TestUpdateAdminMock(t *testing.T) {
 	altToken, err := getJWTAPITokenFromTestServer(altAdminUsername, defaultTokenAuthPass)
 	assert.NoError(t, err)
 	admin.Password = "" // it must remain unchanged
-	admin.Permissions = []string{dataprovider.PermAdminManageAdmins, dataprovider.PermAdminCloseConnections}
+	admin.Permissions = []string{dataprovider.PermAdminAny}
 	asJSON, err = json.Marshal(admin)
 	assert.NoError(t, err)
 	req, _ = http.NewRequest(http.MethodPut, path.Join(adminPath, altAdminUsername), bytes.NewBuffer(asJSON))
@@ -13094,6 +13145,7 @@ func TestWebClientMaxConnections(t *testing.T) {
 	err = os.RemoveAll(user.GetHomeDir())
 	assert.NoError(t, err)
 	assert.Len(t, common.Connections.GetStats(""), 0)
+	assert.Equal(t, int32(0), common.Connections.GetTotalTransfers())
 
 	common.Config.MaxTotalConnections = oldValue
 }
@@ -13388,6 +13440,125 @@ func TestMaxSessions(t *testing.T) {
 	err = os.RemoveAll(user.GetHomeDir())
 	assert.NoError(t, err)
 	assert.Len(t, common.Connections.GetStats(""), 0)
+	assert.Equal(t, int32(0), common.Connections.GetTotalTransfers())
+}
+
+func TestMaxTransfers(t *testing.T) {
+	oldValue := common.Config.MaxPerHostConnections
+	common.Config.MaxPerHostConnections = 2
+
+	assert.Eventually(t, func() bool {
+		return common.Connections.GetClientConnections() == 0
+	}, 1000*time.Millisecond, 50*time.Millisecond)
+	user, _, err := httpdtest.AddUser(getTestUser(), http.StatusCreated)
+	assert.NoError(t, err)
+
+	webToken, err := getJWTWebClientTokenFromTestServer(defaultUsername, defaultPassword)
+	assert.NoError(t, err)
+	webAPIToken, err := getJWTAPIUserTokenFromTestServer(defaultUsername, defaultPassword)
+	assert.NoError(t, err)
+
+	share := dataprovider.Share{
+		Name:     "test share",
+		Scope:    dataprovider.ShareScopeReadWrite,
+		Paths:    []string{"/"},
+		Password: defaultPassword,
+	}
+	asJSON, err := json.Marshal(share)
+	assert.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, userSharesPath, bytes.NewBuffer(asJSON))
+	assert.NoError(t, err)
+	setBearerForReq(req, webAPIToken)
+	rr := executeRequest(req)
+	checkResponseCode(t, http.StatusCreated, rr)
+	objectID := rr.Header().Get("X-Object-ID")
+	assert.NotEmpty(t, objectID)
+
+	fileName := "testfile.txt"
+	req, err = http.NewRequest(http.MethodPost, userUploadFilePath+"?path="+fileName, bytes.NewBuffer([]byte(" ")))
+	assert.NoError(t, err)
+	setBearerForReq(req, webAPIToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusCreated, rr)
+
+	conn, sftpClient, err := getSftpClient(user)
+	assert.NoError(t, err)
+	defer conn.Close()
+	defer sftpClient.Close()
+
+	f1, err := sftpClient.Create("file1")
+	assert.NoError(t, err)
+	f2, err := sftpClient.Create("file2")
+	assert.NoError(t, err)
+	_, err = f1.Write([]byte(" "))
+	assert.NoError(t, err)
+	_, err = f2.Write([]byte(" "))
+	assert.NoError(t, err)
+
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("filenames", "filepre")
+	assert.NoError(t, err)
+	_, err = part.Write([]byte("file content"))
+	assert.NoError(t, err)
+	err = writer.Close()
+	assert.NoError(t, err)
+	reader := bytes.NewReader(body.Bytes())
+	_, err = reader.Seek(0, io.SeekStart)
+	assert.NoError(t, err)
+	req, err = http.NewRequest(http.MethodPost, userFilesPath, reader)
+	assert.NoError(t, err)
+	req.Header.Add("Content-Type", writer.FormDataContentType())
+	setBearerForReq(req, webAPIToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusConflict, rr)
+
+	req, err = http.NewRequest(http.MethodGet, webClientFilesPath+"?path="+fileName, nil)
+	assert.NoError(t, err)
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
+	assert.Contains(t, rr.Body.String(), util.I18nError403Message)
+
+	req, err = http.NewRequest(http.MethodPost, userUploadFilePath+"?path="+fileName, bytes.NewBuffer([]byte(" ")))
+	assert.NoError(t, err)
+	setBearerForReq(req, webAPIToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusForbidden, rr)
+
+	body = new(bytes.Buffer)
+	writer = multipart.NewWriter(body)
+	part1, err := writer.CreateFormFile("filenames", "file11.txt")
+	assert.NoError(t, err)
+	_, err = part1.Write([]byte("file11 content"))
+	assert.NoError(t, err)
+	part2, err := writer.CreateFormFile("filenames", "file22.txt")
+	assert.NoError(t, err)
+	_, err = part2.Write([]byte("file22 content"))
+	assert.NoError(t, err)
+	err = writer.Close()
+	assert.NoError(t, err)
+	reader = bytes.NewReader(body.Bytes())
+	req, err = http.NewRequest(http.MethodPost, sharesPath+"/"+objectID, reader)
+	assert.NoError(t, err)
+	req.Header.Add("Content-Type", writer.FormDataContentType())
+	req.SetBasicAuth(defaultUsername, defaultPassword)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusConflict, rr)
+
+	err = f1.Close()
+	assert.NoError(t, err)
+	err = f2.Close()
+	assert.NoError(t, err)
+
+	_, err = httpdtest.RemoveUser(user, http.StatusOK)
+	assert.NoError(t, err)
+	err = os.RemoveAll(user.GetHomeDir())
+	assert.NoError(t, err)
+	assert.Len(t, common.Connections.GetStats(""), 0)
+	assert.Equal(t, int32(0), common.Connections.GetTotalTransfers())
+
+	common.Config.MaxPerHostConnections = oldValue
 }
 
 func TestWebConfigsMock(t *testing.T) {
@@ -14933,6 +15104,7 @@ func TestShareMaxSessions(t *testing.T) {
 	err = os.RemoveAll(user.GetHomeDir())
 	assert.NoError(t, err)
 	assert.Len(t, common.Connections.GetStats(""), 0)
+	assert.Equal(t, int32(0), common.Connections.GetTotalTransfers())
 }
 
 func TestShareUploadSingle(t *testing.T) {
@@ -19067,6 +19239,7 @@ func TestClientUserClose(t *testing.T) {
 	wg.Wait()
 	assert.Eventually(t, func() bool { return len(common.Connections.GetStats("")) == 0 },
 		1*time.Second, 100*time.Millisecond)
+	assert.Equal(t, int32(0), common.Connections.GetTotalTransfers())
 
 	_, err = httpdtest.RemoveUser(user, http.StatusOK)
 	assert.NoError(t, err)
@@ -19859,6 +20032,7 @@ func TestWebUserProfile(t *testing.T) {
 	form.Set("public_keys[0][public_key]", testPubKey)
 	form.Set("public_keys[1][public_key]", testPubKey1)
 	form.Set("tls_certs[0][tls_cert]", httpsCert)
+	form.Set("additional_emails[0][additional_email]", "email1@user.com")
 	// no csrf token
 	req, err := http.NewRequest(http.MethodPost, webClientProfilePath, bytes.NewBuffer([]byte(form.Encode())))
 	assert.NoError(t, err)
@@ -19885,6 +20059,9 @@ func TestWebUserProfile(t *testing.T) {
 	assert.Len(t, user.Filters.TLSCerts, 1)
 	assert.Equal(t, email, user.Email)
 	assert.Equal(t, description, user.Description)
+	if assert.Len(t, user.Filters.AdditionalEmails, 1) {
+		assert.Equal(t, "email1@user.com", user.Filters.AdditionalEmails[0])
+	}
 
 	// set an invalid email
 	form.Set("email", "not an email")
@@ -21268,6 +21445,7 @@ func TestWebUserAddMock(t *testing.T) {
 	user.AdditionalInfo = "info"
 	user.Description = "user dsc"
 	user.Email = "test@test.com"
+	user.Filters.AdditionalEmails = []string{"example1@test.com", "example2@test.com"}
 	mappedDir := filepath.Join(os.TempDir(), "mapped")
 	folderName := filepath.Base(mappedDir)
 	f := vfs.BaseVirtualFolder{
@@ -21285,6 +21463,8 @@ func TestWebUserAddMock(t *testing.T) {
 	form.Set(csrfFormToken, csrfToken)
 	form.Set("username", user.Username)
 	form.Set("email", user.Email)
+	form.Set("additional_emails[0][additional_email]", user.Filters.AdditionalEmails[0])
+	form.Set("additional_emails[1][additional_email]", user.Filters.AdditionalEmails[1])
 	form.Set("home_dir", user.HomeDir)
 	form.Set("osfs_read_buffer_size", "2")
 	form.Set("osfs_write_buffer_size", "3")
@@ -21611,6 +21791,7 @@ func TestWebUserAddMock(t *testing.T) {
 	assert.True(t, newUser.Filters.DisableFsChecks)
 	assert.False(t, newUser.Filters.AllowAPIKeyAuth)
 	assert.Equal(t, user.Email, newUser.Email)
+	assert.Equal(t, len(user.Filters.AdditionalEmails), len(newUser.Filters.AdditionalEmails))
 	assert.Equal(t, "/start/dir", newUser.Filters.StartDirectory)
 	assert.Equal(t, 0, newUser.Filters.FTPSecurity)
 	assert.Equal(t, 10, newUser.Filters.DefaultSharesExpiration)
@@ -23861,6 +24042,10 @@ func TestWebEventAction(t *testing.T) {
 			},
 		},
 	}
+	dataprovider.EnabledActionCommands = []string{action.Options.CmdConfig.Cmd}
+	defer func() {
+		dataprovider.EnabledActionCommands = nil
+	}()
 	form.Set("type", fmt.Sprintf("%d", action.Type))
 	req, err = http.NewRequest(http.MethodPost, path.Join(webAdminEventActionPath, action.Name),
 		bytes.NewBuffer([]byte(form.Encode())))
@@ -26656,6 +26841,7 @@ func startOIDCMockServer() {
 			fmt.Fprintf(w, "OK\n")
 		})
 		http.HandleFunc("/auth/realms/sftpgo/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"issuer":"http://127.0.0.1:11111/auth/realms/sftpgo","authorization_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/auth","token_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/token","introspection_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/token/introspect","userinfo_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/userinfo","end_session_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/logout","frontchannel_logout_session_supported":true,"frontchannel_logout_supported":true,"jwks_uri":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/certs","check_session_iframe":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/login-status-iframe.html","grant_types_supported":["authorization_code","implicit","refresh_token","password","client_credentials","urn:ietf:params:oauth:grant-type:device_code","urn:openid:params:grant-type:ciba"],"response_types_supported":["code","none","id_token","token","id_token token","code id_token","code token","code id_token token"],"subject_types_supported":["public","pairwise"],"id_token_signing_alg_values_supported":["PS384","ES384","RS384","HS256","HS512","ES256","RS256","HS384","ES512","PS256","PS512","RS512"],"id_token_encryption_alg_values_supported":["RSA-OAEP","RSA-OAEP-256","RSA1_5"],"id_token_encryption_enc_values_supported":["A256GCM","A192GCM","A128GCM","A128CBC-HS256","A192CBC-HS384","A256CBC-HS512"],"userinfo_signing_alg_values_supported":["PS384","ES384","RS384","HS256","HS512","ES256","RS256","HS384","ES512","PS256","PS512","RS512","none"],"request_object_signing_alg_values_supported":["PS384","ES384","RS384","HS256","HS512","ES256","RS256","HS384","ES512","PS256","PS512","RS512","none"],"request_object_encryption_alg_values_supported":["RSA-OAEP","RSA-OAEP-256","RSA1_5"],"request_object_encryption_enc_values_supported":["A256GCM","A192GCM","A128GCM","A128CBC-HS256","A192CBC-HS384","A256CBC-HS512"],"response_modes_supported":["query","fragment","form_post","query.jwt","fragment.jwt","form_post.jwt","jwt"],"registration_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/clients-registrations/openid-connect","token_endpoint_auth_methods_supported":["private_key_jwt","client_secret_basic","client_secret_post","tls_client_auth","client_secret_jwt"],"token_endpoint_auth_signing_alg_values_supported":["PS384","ES384","RS384","HS256","HS512","ES256","RS256","HS384","ES512","PS256","PS512","RS512"],"introspection_endpoint_auth_methods_supported":["private_key_jwt","client_secret_basic","client_secret_post","tls_client_auth","client_secret_jwt"],"introspection_endpoint_auth_signing_alg_values_supported":["PS384","ES384","RS384","HS256","HS512","ES256","RS256","HS384","ES512","PS256","PS512","RS512"],"authorization_signing_alg_values_supported":["PS384","ES384","RS384","HS256","HS512","ES256","RS256","HS384","ES512","PS256","PS512","RS512"],"authorization_encryption_alg_values_supported":["RSA-OAEP","RSA-OAEP-256","RSA1_5"],"authorization_encryption_enc_values_supported":["A256GCM","A192GCM","A128GCM","A128CBC-HS256","A192CBC-HS384","A256CBC-HS512"],"claims_supported":["aud","sub","iss","auth_time","name","given_name","family_name","preferred_username","email","acr"],"claim_types_supported":["normal"],"claims_parameter_supported":true,"scopes_supported":["openid","phone","email","web-origins","offline_access","microprofile-jwt","profile","address","roles"],"request_parameter_supported":true,"request_uri_parameter_supported":true,"require_request_uri_registration":true,"code_challenge_methods_supported":["plain","S256"],"tls_client_certificate_bound_access_tokens":true,"revocation_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/revoke","revocation_endpoint_auth_methods_supported":["private_key_jwt","client_secret_basic","client_secret_post","tls_client_auth","client_secret_jwt"],"revocation_endpoint_auth_signing_alg_values_supported":["PS384","ES384","RS384","HS256","HS512","ES256","RS256","HS384","ES512","PS256","PS512","RS512"],"backchannel_logout_supported":true,"backchannel_logout_session_supported":true,"device_authorization_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/auth/device","backchannel_token_delivery_modes_supported":["poll","ping"],"backchannel_authentication_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/ext/ciba/auth","backchannel_authentication_request_signing_alg_values_supported":["PS384","ES384","RS384","ES256","RS256","ES512","PS256","PS512","RS512"],"require_pushed_authorization_requests":false,"pushed_authorization_request_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/ext/par/request","mtls_endpoint_aliases":{"token_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/token","revocation_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/revoke","introspection_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/token/introspect","device_authorization_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/auth/device","registration_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/clients-registrations/openid-connect","userinfo_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/userinfo","pushed_authorization_request_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/ext/par/request","backchannel_authentication_endpoint":"http://127.0.0.1:11111/auth/realms/sftpgo/protocol/openid-connect/ext/ciba/auth"}}`)
 		})
 		http.HandleFunc("/404", func(w http.ResponseWriter, _ *http.Request) {
@@ -27051,6 +27237,30 @@ func executeRequest(req *http.Request) *httptest.ResponseRecorder {
 
 func checkResponseCode(t *testing.T, expected int, rr *httptest.ResponseRecorder) {
 	assert.Equal(t, expected, rr.Code, rr.Body.String())
+}
+
+func getSftpClient(user dataprovider.User) (*ssh.Client, *sftp.Client, error) {
+	var sftpClient *sftp.Client
+	config := &ssh.ClientConfig{
+		User:            user.Username,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	if user.Password != "" {
+		config.Auth = []ssh.AuthMethod{ssh.Password(user.Password)}
+	} else {
+		config.Auth = []ssh.AuthMethod{ssh.Password(defaultPassword)}
+	}
+
+	conn, err := ssh.Dial("tcp", sftpServerAddr, config)
+	if err != nil {
+		return conn, sftpClient, err
+	}
+	sftpClient, err = sftp.NewClient(conn)
+	if err != nil {
+		conn.Close()
+	}
+	return conn, sftpClient, err
 }
 
 func createTestFile(path string, size int64) error {

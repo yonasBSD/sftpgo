@@ -19,9 +19,7 @@ The WebClient UI allows end users to change their credentials, browse and manage
 
 We strongly believe in Open Source software model, so we decided to make SFTPGo available to everyone, but maintaining and evolving SFTPGo takes a lot of time and work. To make development and maintenance sustainable you should consider to support the project with a [sponsorship](https://github.com/sponsors/drakkan).
 
-The open source license grant you freedom but not assurance of help. So why would you rely on free software without support or any guarantee it will stay healthy and maintained for the upcoming years?
-
-Supporting the project benefit businesses and the community because if the project is financially sustainable, using this business model, we don't have to restrict features and/or switch to an [Open-core](https://en.wikipedia.org/wiki/Open-core_model) model. The technology stays truly open source. Everyone wins.
+We love doing the work and we'd like to keep doing it - your support helps make SFTPGo possible.
 
 It is important to understand that you should support SFTPGo and any other Open Source project you rely on for ongoing maintenance, even if you don't have any questions or need new features, to mitigate the business risk of a project you depend on going unmaintained, with its security and development velocity implications.
 
@@ -45,19 +43,26 @@ It is important to understand that you should support SFTPGo and any other Open 
 </br></br>
 [<img src="./img/vps2day.png" alt="VPS2day logo" width="234" height="56">](https://www.vps2day.com/)
 
-## Support policy
+## Support
 
-You can use SFTPGo for free, respecting the obligations of the Open Source license, but please do not ask or expect free support as well.
+You can use SFTPGo for free, respecting the obligations of the Open Source [license](#license), but please do not ask or expect free support as well.
 
 Use [discussions](https://github.com/drakkan/sftpgo/discussions) to ask questions and get support from the community.
 
-If you report an invalid issue and/or ask for step-by-step support, your issue will be closed as invalid without further explanation and/or the "support request" label will be added. Invalid bug reports may confuse other users. Thanks for understanding.
+We offer commercial support, guarantees, and advice for SFTPGo:
 
-We also provide [commercial support](https://sftpgo.com/).
+- With our [plans](https://sftpgo.com/plans) you can safely install and use SFTPGo on-premise in professional environments.
+- With our [SaaS offerings](https://sftpgo.com/saas) you can use SFTPGo hosted in the cloud, fully managed and supported.
 
 ## Documentation
 
 You can read more about supported features and documentation at [docs.sftpgo.com](https://docs.sftpgo.com/).
+
+## Internationalization
+
+The translations are available via [Crowdin](https://crowdin.com/project/sftpgo), who have granted us an open source license.
+
+Before start translating please take a look at our contribution [guidelines](https://sftpgo.github.io/latest/web-interfaces/#internationalization).
 
 ## Release Cadence
 
@@ -79,7 +84,7 @@ Thank you to [Incode](https://www.incode.it/) for helping us to improve the UI/U
 
 ## License
 
-SFTPGo source code is licensed under the GNU AGPL-3.0-only.
+SFTPGo source code is licensed under the GNU AGPL-3.0-only with [additional terms](./NOTICE).
 
 The [theme](https://keenthemes.com/products/templates-mega-bundle) used in WebAdmin and WebClient user interfaces is proprietary, this means:
 

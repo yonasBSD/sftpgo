@@ -1,6 +1,6 @@
 #!/bin/bash
 
-NFPM_VERSION=2.40.0
+NFPM_VERSION=2.41.0
 NFPM_ARCH=${NFPM_ARCH:-amd64}
 if [ -z ${SFTPGO_VERSION} ]
 then
@@ -82,6 +82,12 @@ contents:
 
   - src: "${BASE_DIR}/openapi/*"
     dst: "/usr/share/sftpgo/openapi"
+
+  - src: "${BASE_DIR}/LICENSE"
+    dst: "/usr/share/licenses/sftpgo/LICENSE"
+
+  - src: "${BASE_DIR}/NOTICE"
+    dst: "/usr/share/licenses/sftpgo/NOTICE"
 
   - src: "./sftpgo.json"
     dst: "/etc/sftpgo/sftpgo.json"

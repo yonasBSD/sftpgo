@@ -217,6 +217,33 @@ func TestConnections(t *testing.T) {
 	Connections.RUnlock()
 }
 
+func TestEventManagerCommandsInitialization(t *testing.T) {
+	configCopy := Config
+
+	c := Configuration{
+		EventManager: EventManagerConfig{
+			EnabledCommands: []string{"ls"}, // not an absolute path
+		},
+	}
+	err := Initialize(c, 0)
+	assert.ErrorContains(t, err, "invalid command")
+
+	var commands []string
+	if runtime.GOOS == osWindows {
+		commands = []string{"C:\\command"}
+	} else {
+		commands = []string{"/bin/ls"}
+	}
+
+	c.EventManager.EnabledCommands = commands
+	err = Initialize(c, 0)
+	assert.NoError(t, err)
+	assert.Equal(t, commands, dataprovider.EnabledActionCommands)
+
+	dataprovider.EnabledActionCommands = configCopy.EventManager.EnabledCommands
+	Config = configCopy
+}
+
 func TestInitializationProxyErrors(t *testing.T) {
 	configCopy := Config
 
@@ -626,11 +653,17 @@ func TestMaxConnections(t *testing.T) {
 
 	ipAddr := "192.168.7.8"
 	assert.NoError(t, Connections.IsNewConnectionAllowed(ipAddr, ProtocolFTP))
+	assert.NoError(t, Connections.IsNewTransferAllowed(userTestUsername))
 
 	Config.MaxTotalConnections = 1
 	Config.MaxPerHostConnections = perHost
 
 	assert.NoError(t, Connections.IsNewConnectionAllowed(ipAddr, ProtocolHTTP))
+	assert.NoError(t, Connections.IsNewTransferAllowed(userTestUsername))
+	isShuttingDown.Store(true)
+	assert.ErrorIs(t, Connections.IsNewTransferAllowed(userTestUsername), ErrShuttingDown)
+	isShuttingDown.Store(false)
+
 	c := NewBaseConnection("id", ProtocolSFTP, "", "", dataprovider.User{})
 	fakeConn := &fakeConnection{
 		BaseConnection: c,
@@ -639,6 +672,10 @@ func TestMaxConnections(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, Connections.GetStats(""), 1)
 	assert.Error(t, Connections.IsNewConnectionAllowed(ipAddr, ProtocolSSH))
+	Connections.transfers.add(userTestUsername)
+	assert.Error(t, Connections.IsNewTransferAllowed(userTestUsername))
+	Connections.transfers.remove(userTestUsername)
+	assert.Equal(t, int32(0), Connections.GetTotalTransfers())
 
 	res := Connections.Close(fakeConn.GetID(), "")
 	assert.True(t, res)
@@ -650,6 +687,9 @@ func TestMaxConnections(t *testing.T) {
 	assert.Error(t, Connections.IsNewConnectionAllowed(ipAddr, ProtocolSSH))
 	Connections.RemoveClientConnection(ipAddr)
 	assert.NoError(t, Connections.IsNewConnectionAllowed(ipAddr, ProtocolWebDAV))
+	Connections.transfers.add(userTestUsername)
+	assert.Error(t, Connections.IsNewConnectionAllowed(ipAddr, ProtocolSSH))
+	Connections.transfers.remove(userTestUsername)
 	Connections.RemoveClientConnection(ipAddr)
 
 	Config.MaxTotalConnections = oldValue

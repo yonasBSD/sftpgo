@@ -125,6 +125,9 @@ func init() {
 	Connections.clients = clientsMap{
 		clients: make(map[string]int),
 	}
+	Connections.transfers = clientsMap{
+		clients: make(map[string]int),
+	}
 	Connections.perUserConns = make(map[string]int)
 	Connections.mapping = make(map[string]int)
 	Connections.sshMapping = make(map[string]int)
@@ -236,6 +239,9 @@ func Initialize(c Configuration, isShared int) error {
 	if err := c.initializeProxyProtocol(); err != nil {
 		return err
 	}
+	if err := c.EventManager.validate(); err != nil {
+		return err
+	}
 	vfs.SetTempPath(c.TempPath)
 	dataprovider.SetTempPath(c.TempPath)
 	vfs.SetAllowSelfConnections(c.AllowSelfConnections)
@@ -244,6 +250,7 @@ func Initialize(c Configuration, isShared int) error {
 	vfs.SetResumeMaxSize(c.ResumeMaxSize)
 	vfs.SetUploadMode(c.UploadMode)
 	dataprovider.SetAllowSelfConnections(c.AllowSelfConnections)
+	dataprovider.EnabledActionCommands = c.EventManager.EnabledCommands
 	transfersChecker = getTransfersChecker(isShared)
 	return nil
 }
@@ -509,6 +516,23 @@ type ConnectionTransfer struct {
 	DLSize        int64  `json:"-"`
 }
 
+// EventManagerConfig defines the configuration for the EventManager
+type EventManagerConfig struct {
+	// EnabledCommands defines the system commands that can be executed via EventManager,
+	// an empty list means that any command is allowed to be executed.
+	// Commands must be set as an absolute path
+	EnabledCommands []string `json:"enabled_commands" mapstructure:"enabled_commands"`
+}
+
+func (c *EventManagerConfig) validate() error {
+	for _, c := range c.EnabledCommands {
+		if !filepath.IsAbs(c) {
+			return fmt.Errorf("invalid command %q: it must be an absolute path", c)
+		}
+	}
+	return nil
+}
+
 // MetadataConfig defines how to handle metadata for cloud storage backends
 type MetadataConfig struct {
 	// If not zero the metadata will be read before downloads and will be
@@ -618,7 +642,9 @@ type Configuration struct {
 	// server's local time, otherwise UTC will be used.
 	TZ string `json:"tz" mapstructure:"tz"`
 	// Metadata configuration
-	Metadata              MetadataConfig `json:"metadata" mapstructure:"metadata"`
+	Metadata MetadataConfig `json:"metadata" mapstructure:"metadata"`
+	// EventManager configuration
+	EventManager          EventManagerConfig `json:"event_manager" mapstructure:"event_manager"`
 	idleTimeoutAsDuration time.Duration
 	idleLoginTimeout      time.Duration
 	defender              Defender
@@ -841,6 +867,7 @@ func getProxyPolicy(allowed, skipped []func(net.IP) bool, def proxyproto.Policy)
 		if err != nil {
 			// Something is wrong with the source IP, better reject the
 			// connection.
+			logger.Error(logSender, "", "reject connection from ip %q, err: %v", connPolicyOptions.Upstream, err)
 			return proxyproto.REJECT, proxyproto.ErrInvalidUpstream
 		}
 
@@ -860,6 +887,8 @@ func getProxyPolicy(allowed, skipped []func(net.IP) bool, def proxyproto.Policy)
 		}
 
 		if def == proxyproto.REQUIRE {
+			logger.Debug(logSender, "", "reject connection from ip %q: proxy protocol signature required and not set",
+				upstreamIP)
 			return proxyproto.REJECT, proxyproto.ErrInvalidUpstream
 		}
 		return def, nil
@@ -908,7 +937,9 @@ func (c *SSHConnection) Close() error {
 type ActiveConnections struct {
 	// clients contains both authenticated and estabilished connections and the ones waiting
 	// for authentication
-	clients              clientsMap
+	clients clientsMap
+	// transfers contains active transfers, total and per-user
+	transfers            clientsMap
 	transfersCheckStatus atomic.Bool
 	sync.RWMutex
 	connections    []ActiveConnection
@@ -958,6 +989,9 @@ func (conns *ActiveConnections) Add(c ActiveConnection) error {
 		if maxSessions := c.GetMaxSessions(); maxSessions > 0 {
 			if val := conns.perUserConns[username]; val >= maxSessions {
 				return fmt.Errorf("too many open sessions: %d/%d", val, maxSessions)
+			}
+			if val := conns.transfers.getTotalFrom(username); val >= maxSessions {
+				return fmt.Errorf("too many open transfers: %d/%d", val, maxSessions)
 			}
 		}
 		conns.addUserConnection(username)
@@ -1219,6 +1253,35 @@ func (conns *ActiveConnections) GetClientConnections() int32 {
 	return conns.clients.getTotal()
 }
 
+// GetTotalTransfers returns the total number of active transfers
+func (conns *ActiveConnections) GetTotalTransfers() int32 {
+	return conns.transfers.getTotal()
+}
+
+// IsNewTransferAllowed returns an error if the maximum number of concurrent allowed
+// transfers is exceeded
+func (conns *ActiveConnections) IsNewTransferAllowed(username string) error {
+	if isShuttingDown.Load() {
+		return ErrShuttingDown
+	}
+	if Config.MaxTotalConnections == 0 && Config.MaxPerHostConnections == 0 {
+		return nil
+	}
+	if Config.MaxPerHostConnections > 0 {
+		if transfers := conns.transfers.getTotalFrom(username); transfers >= Config.MaxPerHostConnections {
+			logger.Info(logSender, "", "active transfers from user %q: %d/%d", username, transfers, Config.MaxPerHostConnections)
+			return ErrConnectionDenied
+		}
+	}
+	if Config.MaxTotalConnections > 0 {
+		if transfers := conns.transfers.getTotal(); transfers >= int32(Config.MaxTotalConnections) {
+			logger.Info(logSender, "", "active transfers %d/%d", transfers, Config.MaxTotalConnections)
+			return ErrConnectionDenied
+		}
+	}
+	return nil
+}
+
 // IsNewConnectionAllowed returns an error if the maximum number of concurrent allowed
 // connections is exceeded or a whitelist is defined and the specified ipAddr is not listed
 // or the service is shutting down
@@ -1259,7 +1322,11 @@ func (conns *ActiveConnections) IsNewConnectionAllowed(ipAddr, protocol string) 
 		}
 
 		// on a single SFTP connection we could have multiple SFTP channels or commands
-		// so we check the estabilished connections too
+		// so we check the estabilished connections and active uploads too
+		if transfers := conns.transfers.getTotal(); transfers >= int32(Config.MaxTotalConnections) {
+			logger.Info(logSender, "", "active transfers %d/%d", transfers, Config.MaxTotalConnections)
+			return ErrConnectionDenied
+		}
 
 		conns.RLock()
 		defer conns.RUnlock()

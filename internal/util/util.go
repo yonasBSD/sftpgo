@@ -40,6 +40,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,7 +49,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lithammer/shortuuid/v4"
-	"github.com/rs/xid"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/drakkan/sftpgo/v2/internal/logger"
@@ -126,18 +126,6 @@ var bytesSizeTable = map[string]uint64{
 	"p":  pByte,
 	"ei": eiByte,
 	"e":  eByte,
-}
-
-// Remove removes an element from a string slice and
-// returns the modified slice
-func Remove(elems []string, val string) []string {
-	for idx, v := range elems {
-		if v == val {
-			elems[idx] = elems[len(elems)-1]
-			return elems[:len(elems)-1]
-		}
-	}
-	return elems
 }
 
 // IsStringPrefixInSlice searches a string prefix in a slice and returns true
@@ -566,23 +554,17 @@ func createDirPathIfMissing(file string, perm os.FileMode) error {
 func GenerateRandomBytes(length int) []byte {
 	b := make([]byte, length)
 	_, err := io.ReadFull(rand.Reader, b)
-	if err == nil {
-		return b
+	if err != nil {
+		PanicOnError(fmt.Errorf("failed to read random data (see https://go.dev/issue/66821): %w", err))
 	}
-
-	b = xid.New().Bytes()
-	for len(b) < length {
-		b = append(b, xid.New().Bytes()...)
-	}
-
-	return b[:length]
+	return b
 }
 
 // GenerateUniqueID returns an unique ID
 func GenerateUniqueID() string {
 	u, err := uuid.NewRandom()
 	if err != nil {
-		return xid.New().String()
+		PanicOnError(fmt.Errorf("failed to read random data (see https://go.dev/issue/66821): %w", err))
 	}
 	return shortuuid.DefaultEncoder.Encode(u)
 }
@@ -642,6 +624,11 @@ func GetTLSCiphersFromNames(cipherNames []string) []uint16 {
 
 	for _, name := range RemoveDuplicates(cipherNames, false) {
 		for _, c := range tls.CipherSuites() {
+			if c.Name == strings.TrimSpace(name) {
+				ciphers = append(ciphers, c.ID)
+			}
+		}
+		for _, c := range tls.InsecureCipherSuites() {
 			if c.Name == strings.TrimSpace(name) {
 				ciphers = append(ciphers, c.ID)
 			}
@@ -807,7 +794,9 @@ func GetRedactedURL(rawurl string) string {
 	return u.Redacted()
 }
 
-// GetTLSVersion returns the TLS version for integer:
+// GetTLSVersion returns the TLS version from an integer value:
+// - 10 means TLS 1.0
+// - 11 means TLS 1.1
 // - 12 means TLS 1.2
 // - 13 means TLS 1.3
 // default is TLS 1.2
@@ -815,6 +804,10 @@ func GetTLSVersion(val int) uint16 {
 	switch val {
 	case 13:
 		return tls.VersionTLS13
+	case 11:
+		return tls.VersionTLS11
+	case 10:
+		return tls.VersionTLS10
 	default:
 		return tls.VersionTLS12
 	}
@@ -916,4 +909,19 @@ func ReadConfigFromFile(name, configDir string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(BytesToString(val)), nil
+}
+
+// SlicesEqual checks if the provided slices contain the same elements,
+// also in different order.
+func SlicesEqual(s1, s2 []string) bool {
+	if len(s1) != len(s2) {
+		return false
+	}
+	for _, v := range s1 {
+		if !slices.Contains(s2, v) {
+			return false
+		}
+	}
+
+	return true
 }

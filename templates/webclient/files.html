@@ -260,7 +260,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             "nut", "styl", "swift", "text", "ltx", "tex", "v", "sv", "svh", "tcl", "textile", "toml", "1", "2", "3", "4",
             "5", "6", "7", "8", "9", "ttcn", "ttcn3", "ttcnpp", "cfg", "ttl", "ts", "tsx", "webidl", "vb", "vbs",
             "vtl", "vhd", "vhdl", "vue", "xml", "xsl", "xsd", "svg", "xy", "xquery", "ys", "yaml", "yml", "z80",
-            "mscgen", "mscin", "msc", "xu", "msgenny", "wat", "wast"];
+            "mscgen", "mscin", "msc", "xu", "msgenny", "wat", "wast", "env"];
     const supportedEditFilenames = ["readme", "dockerfile", "pkgbuild"]
     //{{- end}}
     function keepAlive() {
@@ -687,7 +687,6 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                                         case "webp":
                                         case "bmp":
                                         case "svg":
-                                        case "ico":
                                             let desc = escapeHTML(filename).replace(/"/g, '&quot;');
                                             previewDiv = `<div class="ms-2" data-kt-filemanger-table="view_item">
 												    <a href="${row['url']}" data-gallery="gallery" data-glightbox="description: &lt;span class=&quot;fs-5 fw-bold&quot;&gt;${desc}&lt;/span&gt;" class="btn btn-sm btn-icon btn-light btn-active-light-primary glightbox">
@@ -1168,7 +1167,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                             if (selectedRowsIdx.length == 0){
                                 return;
                             }
-                            $('#loading_message').text("");
+                            clearLoading();
                             KTApp.showPageLoading();
 
                             function deleteSelected() {
@@ -1190,15 +1189,14 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                                 }
                                 path+='?path={{.CurrentDir}}'+encodeURIComponent("/"+itemName);
 
-                                let deleteTxt = "";
                                 if (selectedRowsIdx.length > 1){
-                                    deleteTxt = $.t('fs.deleting', {
+                                    let info = $.t('fs.deleting', {
                                         idx : index + 1,
-                                        total: selectedRowsIdx.length,
-                                        name: itemName
+                                        total: selectedRowsIdx.length
                                     });
+                                    setLoadingText(info,itemName);
                                 }
-                                $('#loading_message').text(deleteTxt);
+
                                 axios.delete(path,{
                                     timeout: 15000,
                                     headers: {
@@ -1400,7 +1398,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         let hasError = false;
         let index = 0;
 
-        $('#loading_message').text("");
+        clearLoading();
         KTApp.showPageLoading();
 
         function copyItem() {
@@ -1425,12 +1423,11 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             targetPath+=item.targetName;
 
             if (items.length > 1) {
-                msgTxt = $.t('fs.copying', {
+                let info = $.t('fs.copying', {
                     idx: index + 1,
-                    total: items.length,
-                    name: `${sourcePath} => ${targetPath}`
+                    total: items.length
                 });
-                $('#loading_message').text(msgTxt);
+                setLoadingText(info,`${sourcePath} => ${targetPath}`);
             }
             let path = '{{.FileActionsURL}}/copy';
             path+='?path={{.CurrentDir}}'+encodeURIComponent("/"+item.sourceName)+'&target='+item.targetDir+encodeURIComponent("/"+item.targetName);
@@ -1550,7 +1547,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         let hasError = false;
         let index = 0;
 
-        $('#loading_message').text("");
+        clearLoading();
         KTApp.showPageLoading();
 
         function moveItem() {
@@ -1575,12 +1572,11 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             targetPath+=item.targetName;
 
             if (items.length > 1) {
-                msgTxt = $.t('fs.moving', {
+                let info = $.t('fs.moving', {
                     idx: index + 1,
-                    total: items.length,
-                    name: `${sourcePath} => ${targetPath}`
+                    total: items.length
                 });
-                $('#loading_message').text(msgTxt);
+                setLoadingText(info,`${sourcePath} => ${targetPath}`);
             }
             let path = '{{.FileActionsURL}}/move';
             path+='?path={{.CurrentDir}}'+encodeURIComponent("/"+item.sourceName)+'&target='+item.targetDir+encodeURIComponent("/"+item.targetName);
@@ -1690,7 +1686,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             }
         }).then((result) => {
             if (result.isConfirmed){
-                $('#loading_message').text("");
+                clearLoading();
                 KTApp.showPageLoading();
                 let isDir = (getTypeFromMeta(meta) == "1");
                 let path;
@@ -1822,7 +1818,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             return;
         }
 
-        $('#loading_message').text("");
+        clearLoading();
         KTApp.showPageLoading();
 
         function executeRename() {
@@ -1985,7 +1981,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         let success = 0;
         let checkedDirs = [];
         $('#errorMsg').addClass("d-none");
-        $('#loading_message').text("");
+        clearLoading();
         KTApp.showPageLoading();
 
         function uploadFile() {
@@ -2024,16 +2020,15 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 lastModified = "";
             }
 
-            let uploadTxt = f.name;
+            let info = "";
             if (files.length > 1){
-                uploadTxt = $.t('fs.uploading', {
+                info = $.t('fs.uploading', {
                     idx: index + 1,
-                    total: files.length,
-                    name: uploadTxt
+                    total: files.length
                 });
             }
 
-            $('#loading_message').text(uploadTxt);
+            setLoadingText(info,f.name);
 
             axios.post(uploadPath, f, {
                 headers: {
@@ -2046,7 +2041,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     }
                     const percentage = Math.round((100 * progressEvent.loaded) / progressEvent.total);
                     if (percentage > 0 && percentage < 100){
-                        $('#loading_message').text(`${uploadTxt} ${percentage}%`);
+                        setLoadingText(info,`${f.name} ${percentage}%`);
                     }
                 },
                 validateStatus: function (status) {
@@ -2200,6 +2195,26 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
     $(document).on("i18nshow", function(){
         KTDatatablesServerSide.init();
 
+        var lastAddedFile = Date.now();
+
+        function canUpload() {
+            // Ugly hack to detect if we are still loading a large file list when the user try to upload files.
+            // The Dropzone addedfiles event is fired for directories before the files within them are added to the queue.
+            // TODO: investigate if there is a better way.
+            if (Date.now() - lastAddedFile < 500) {
+                ModalAlert.fire({
+                    text: $.t('fs.upload_queue_not_ready'),
+                    icon: "warning",
+                    confirmButtonText: $.t('general.ok'),
+                    customClass: {
+                        confirmButton: "btn btn-primary"
+                    }
+                });
+                return false;
+            }
+            return true;
+        }
+
         var dropzone =  new Dropzone("#upload_files", {
             url: "{{.FilesURL}}?path={{.CurrentDir}}",
             paramName: "filenames",
@@ -2214,7 +2229,9 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             init: function() {
                 var dropzone = this;
                 $("#upload_files_button").click(function(){
-                   uploadFiles(dropzone.getAcceptedFiles());
+                    if (canUpload()){
+                        uploadFiles(dropzone.getAcceptedFiles());
+                    }
                 });
             }
         });
@@ -2228,6 +2245,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     node.textContent = file.fullPath;
                 }
             }
+            lastAddedFile = Date.now();
         });
 
         var dropzoneEmpty =  new Dropzone("#upload_files_empty", {
@@ -2244,7 +2262,9 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             init: function() {
                 var dropzoneEmpty = this;
                 $("#upload_files_empty_button").click(function(){
-                   uploadFiles(dropzoneEmpty.getAcceptedFiles());
+                    if (canUpload()){
+                        uploadFiles(dropzoneEmpty.getAcceptedFiles());
+                    }
                 });
             }
         });
@@ -2258,6 +2278,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     node.textContent = file.fullPath;
                 }
             }
+            lastAddedFile = Date.now();
         });
 
         $('#modal_video_player').on('hide.bs.modal', function () {

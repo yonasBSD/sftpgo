@@ -159,6 +159,8 @@ func (c *BaseConnection) CloseFS() error {
 
 // AddTransfer associates a new transfer to this connection
 func (c *BaseConnection) AddTransfer(t ActiveTransfer) {
+	Connections.transfers.add(c.User.Username)
+
 	c.Lock()
 	defer c.Unlock()
 
@@ -190,6 +192,8 @@ func (c *BaseConnection) AddTransfer(t ActiveTransfer) {
 
 // RemoveTransfer removes the specified transfer from the active ones
 func (c *BaseConnection) RemoveTransfer(t ActiveTransfer) {
+	Connections.transfers.remove(c.User.Username)
+
 	c.Lock()
 	defer c.Unlock()
 
@@ -322,10 +326,9 @@ func (c *BaseConnection) ListDir(virtualPath string) (*DirListerAt, error) {
 	}
 	return &DirListerAt{
 		virtualPath: virtualPath,
-		user:        &c.User,
+		conn:        c,
+		fs:          fs,
 		info:        c.User.GetVirtualFoldersInfo(virtualPath),
-		id:          c.ID,
-		protocol:    c.protocol,
 		lister:      lister,
 	}, nil
 }
@@ -1790,10 +1793,9 @@ func (c *BaseConnection) GetFsAndResolvedPath(virtualPath string) (vfs.Fs, strin
 // DirListerAt defines a directory lister implementing the ListAt method.
 type DirListerAt struct {
 	virtualPath string
-	user        *dataprovider.User
+	conn        *BaseConnection
+	fs          vfs.Fs
 	info        []os.FileInfo
-	id          string
-	protocol    string
 	mu          sync.Mutex
 	lister      vfs.DirLister
 }
@@ -1836,10 +1838,10 @@ func (l *DirListerAt) Next(limit int) ([]os.FileInfo, error) {
 	for {
 		files, err := l.lister.Next(limit)
 		if err != nil && !errors.Is(err, io.EOF) {
-			logger.Debug(l.protocol, l.id, "error retrieving directory entries: %+v", err)
-			return files, err
+			l.conn.Log(logger.LevelDebug, "error retrieving directory entries: %+v", err)
+			return files, l.conn.GetFsError(l.fs, err)
 		}
-		files = l.user.FilterListDir(files, l.virtualPath)
+		files = l.conn.User.FilterListDir(files, l.virtualPath)
 		if len(l.info) > 0 {
 			files = slices.Concat(l.info, files)
 			l.info = nil
