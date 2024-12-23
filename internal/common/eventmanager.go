@@ -71,6 +71,9 @@ var (
 	// eventManager handle the supported event rules actions
 	eventManager          eventRulesContainer
 	multipartQuoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+	fsEventsWithSize      = []string{operationPreDelete, OperationPreUpload, operationDelete,
+		operationCopy, operationDownload, operationFirstUpload, operationFirstDownload,
+		operationUpload}
 )
 
 func init() {
@@ -348,7 +351,7 @@ func (*eventRulesContainer) checkFsEventMatch(conditions *dataprovider.EventCond
 	if len(conditions.Options.Protocols) > 0 && !slices.Contains(conditions.Options.Protocols, params.Protocol) {
 		return false
 	}
-	if params.Event == operationUpload || params.Event == operationDownload {
+	if slices.Contains(fsEventsWithSize, params.Event) {
 		if conditions.Options.MinFileSize > 0 {
 			if params.FileSize < conditions.Options.MinFileSize {
 				return false
@@ -796,6 +799,7 @@ func (p *EventParams) getStringReplacements(addObjectData, jsonEscaped bool) []s
 		"{{VirtualTargetPath}}", p.getStringReplacement(p.VirtualTargetPath, jsonEscaped),
 		"{{FsTargetPath}}", p.getStringReplacement(p.FsTargetPath, jsonEscaped),
 		"{{ObjectName}}", p.getStringReplacement(p.ObjectName, jsonEscaped),
+		"{{ObjectBaseName}}", p.getStringReplacement(strings.TrimSuffix(p.ObjectName, p.Extension), jsonEscaped),
 		"{{ObjectType}}", p.ObjectType,
 		"{{FileSize}}", strconv.FormatInt(p.FileSize, 10),
 		"{{Elapsed}}", strconv.FormatInt(p.Elapsed, 10),

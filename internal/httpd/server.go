@@ -177,6 +177,7 @@ func (s *httpdServer) renderClientLoginPage(w http.ResponseWriter, r *http.Reque
 		Error:          err,
 		CSRFToken:      createCSRFToken(w, r, s.csrfTokenAuth, xid.New().String(), webBaseClientPath),
 		Branding:       s.binding.webClientBranding(),
+		Languages:      s.binding.languages(),
 		FormDisabled:   s.binding.isWebClientLoginFormDisabled(),
 		CheckRedirect:  true,
 	}
@@ -595,6 +596,7 @@ func (s *httpdServer) renderAdminLoginPage(w http.ResponseWriter, r *http.Reques
 		Error:          err,
 		CSRFToken:      createCSRFToken(w, r, s.csrfTokenAuth, xid.New().String(), webBaseAdminPath),
 		Branding:       s.binding.webAdminBranding(),
+		Languages:      s.binding.languages(),
 		FormDisabled:   s.binding.isWebAdminLoginFormDisabled(),
 		CheckRedirect:  false,
 	}
@@ -758,7 +760,7 @@ func (s *httpdServer) loginUser(
 		errorFunc(w, r, util.NewI18nError(err, util.I18nError500Message))
 		return
 	}
-	invalidateToken(r, !isSecondFactorAuth)
+	invalidateToken(r)
 	if audience == tokenAudienceWebClientPartial {
 		redirectPath := webClientTwoFactorPath
 		if next := r.URL.Query().Get("next"); strings.HasPrefix(next, webClientFilesPath) {
@@ -806,7 +808,7 @@ func (s *httpdServer) loginAdmin(
 		errorFunc(w, r, util.NewI18nError(err, util.I18nError500Message))
 		return
 	}
-	invalidateToken(r, !isSecondFactorAuth)
+	invalidateToken(r)
 	if audience == tokenAudienceWebAdminPartial {
 		http.Redirect(w, r, webAdminTwoFactorPath, http.StatusFound)
 		return
@@ -822,7 +824,7 @@ func (s *httpdServer) loginAdmin(
 
 func (s *httpdServer) logout(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodySize)
-	invalidateToken(r, false)
+	invalidateToken(r)
 	sendAPIResponse(w, r, nil, "Your token has been invalidated", http.StatusOK)
 }
 
@@ -1009,9 +1011,13 @@ func (s *httpdServer) checkCookieExpiration(w http.ResponseWriter, r *http.Reque
 	if tokenClaims.Username == "" || tokenClaims.Signature == "" {
 		return
 	}
-	if time.Until(token.Expiration()) > tokenRefreshThreshold {
+	if time.Until(token.Expiration()) > cookieRefreshThreshold {
 		return
 	}
+	if (time.Since(token.IssuedAt()) + cookieTokenDuration) > maxTokenDuration {
+		return
+	}
+	tokenClaims.JwtIssuedAt = token.IssuedAt()
 	if slices.Contains(token.Audience(), tokenAudienceWebClient) {
 		s.refreshClientToken(w, r, &tokenClaims)
 	} else {

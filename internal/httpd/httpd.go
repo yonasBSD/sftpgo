@@ -608,6 +608,8 @@ type Binding struct {
 	HideLoginURL int `json:"hide_login_url" mapstructure:"hide_login_url"`
 	// Enable the built-in OpenAPI renderer
 	RenderOpenAPI bool `json:"render_openapi" mapstructure:"render_openapi"`
+	// Languages defines the list of enabled translations for the WebAdmin and WebClient UI.
+	Languages []string `json:"languages" mapstructure:"languages"`
 	// Defining an OIDC configuration the web admin and web client UI will use OpenID to authenticate users.
 	OIDC OIDC `json:"oidc" mapstructure:"oidc"`
 	// Security defines security headers to add to HTTP responses and allows to restrict allowed hosts
@@ -640,6 +642,10 @@ func (b *Binding) webAdminBranding() UIBranding {
 
 func (b *Binding) webClientBranding() UIBranding {
 	return dbBrandingConfig.mergeBrandingConfig(b.Branding.WebClient, true)
+}
+
+func (b *Binding) languages() []string {
+	return b.Languages
 }
 
 func (b *Binding) parseAllowedProxy() error {
@@ -859,6 +865,12 @@ type Conf struct {
 	// By default all the available security checks are enabled. Set to 1 to disable the requirement
 	// that a token must be used by the same IP for which it was issued.
 	TokenValidation int `json:"token_validation" mapstructure:"token_validation"`
+	// CookieLifetime defines the duration of cookies for WebAdmin and WebClient
+	CookieLifetime int `json:"cookie_lifetime" mapstructure:"cookie_lifetime"`
+	// ShareCookieLifetime defines the duration of cookies for public shares
+	ShareCookieLifetime int `json:"share_cookie_lifetime" mapstructure:"share_cookie_lifetime"`
+	// JWTLifetime defines the duration of JWT tokens used in REST API
+	JWTLifetime int `json:"jwt_lifetime" mapstructure:"jwt_lifetime"`
 	// MaxUploadFileSize Defines the maximum request body size, in bytes, for Web Client/API HTTP upload requests.
 	// 0 means no limit
 	MaxUploadFileSize int64 `json:"max_upload_file_size" mapstructure:"max_upload_file_size"`
@@ -1095,7 +1107,8 @@ func (c *Conf) Initialize(configDir string, isShared int) error {
 	maxUploadFileSize = c.MaxUploadFileSize
 	installationCode = c.Setup.InstallationCode
 	installationCodeHint = c.Setup.InstallationCodeHint
-	startCleanupTicker(tokenDuration / 2)
+	updateTokensDuration(c.JWTLifetime, c.CookieLifetime, c.ShareCookieLifetime)
+	startCleanupTicker(10 * time.Minute)
 	c.setTokenValidationMode()
 	return <-exitChannel
 }

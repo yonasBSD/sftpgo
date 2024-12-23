@@ -118,6 +118,7 @@ var (
 		ClientIPHeaderDepth: 0,
 		HideLoginURL:        0,
 		RenderOpenAPI:       true,
+		Languages:           []string{"en"},
 		OIDC: httpd.OIDC{
 			ClientID:                   "",
 			ClientSecret:               "",
@@ -403,6 +404,9 @@ func Init() {
 			SigningPassphrase:     "",
 			SigningPassphraseFile: "",
 			TokenValidation:       0,
+			CookieLifetime:        20,
+			ShareCookieLifetime:   120,
+			JWTLifetime:           20,
 			MaxUploadFileSize:     0,
 			Cors: httpd.CorsConfig{
 				Enabled:              false,
@@ -1850,6 +1854,12 @@ func getHTTPDBindingFromEnv(idx int) { //nolint:gocyclo
 		isSet = true
 	}
 
+	languages, ok := lookupStringListFromEnv(fmt.Sprintf("SFTPGO_HTTPD__BINDINGS__%d__LANGUAGES", idx))
+	if ok {
+		binding.Languages = languages
+		isSet = true
+	}
+
 	enableHTTPS, ok := lookupBoolFromEnv(fmt.Sprintf("SFTPGO_HTTPD__BINDINGS__%v__ENABLE_HTTPS", idx))
 	if ok {
 		binding.EnableHTTPS = enableHTTPS
@@ -2148,6 +2158,9 @@ func setViperDefaults() {
 	viper.SetDefault("httpd.signing_passphrase", globalConf.HTTPDConfig.SigningPassphrase)
 	viper.SetDefault("httpd.signing_passphrase_file", globalConf.HTTPDConfig.SigningPassphraseFile)
 	viper.SetDefault("httpd.token_validation", globalConf.HTTPDConfig.TokenValidation)
+	viper.SetDefault("httpd.cookie_lifetime", globalConf.HTTPDConfig.CookieLifetime)
+	viper.SetDefault("httpd.share_cookie_lifetime", globalConf.HTTPDConfig.ShareCookieLifetime)
+	viper.SetDefault("httpd.jwt_lifetime", globalConf.HTTPDConfig.JWTLifetime)
 	viper.SetDefault("httpd.max_upload_file_size", globalConf.HTTPDConfig.MaxUploadFileSize)
 	viper.SetDefault("httpd.cors.enabled", globalConf.HTTPDConfig.Cors.Enabled)
 	viper.SetDefault("httpd.cors.allowed_origins", globalConf.HTTPDConfig.Cors.AllowedOrigins)
