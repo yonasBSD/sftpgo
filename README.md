@@ -41,7 +41,7 @@ It is important to understand that you should support SFTPGo and any other Open 
 
 [<img src="./img/7digital.png" alt="7digital logo" width="178" height="56">](https://www.7digital.com/)
 </br></br>
-[<img src="./img/vps2day.png" alt="VPS2day logo" width="234" height="56">](https://www.vps2day.com/)
+[<img src="./img/servinga.png" alt="servinga logo" width="258" height="56">](https://servinga.com/)
 
 ## Support
 
@@ -95,4 +95,4 @@ More information about [compliance](https://sftpgo.com/compliance.html).
 
 ## Copyright
 
-Copyright (C) 2019 Nicola Murino
+Copyright (C) 2019 - 2025 Nicola Murino

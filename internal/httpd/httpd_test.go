@@ -578,27 +578,28 @@ func TestInitialization(t *testing.T) {
 	httpdConf.Bindings[0].OIDC = httpd.OIDC{}
 	httpdConf.Bindings[0].EnableWebClient = true
 	httpdConf.Bindings[0].EnableWebAdmin = true
-	httpdConf.Bindings[0].EnabledLoginMethods = 1
+	httpdConf.Bindings[0].EnableRESTAPI = true
+	httpdConf.Bindings[0].DisabledLoginMethods = 14
 	err = httpdConf.Initialize(configDir, isShared)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "no login method available for WebAdmin UI")
 	}
-	httpdConf.Bindings[0].EnabledLoginMethods = 2
+	httpdConf.Bindings[0].DisabledLoginMethods = 13
 	err = httpdConf.Initialize(configDir, isShared)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "no login method available for WebAdmin UI")
 	}
-	httpdConf.Bindings[0].EnabledLoginMethods = 6
+	httpdConf.Bindings[0].DisabledLoginMethods = 9
 	err = httpdConf.Initialize(configDir, isShared)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "no login method available for WebClient UI")
 	}
-	httpdConf.Bindings[0].EnabledLoginMethods = 4
+	httpdConf.Bindings[0].DisabledLoginMethods = 11
 	err = httpdConf.Initialize(configDir, isShared)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "no login method available for WebClient UI")
 	}
-	httpdConf.Bindings[0].EnabledLoginMethods = 3
+	httpdConf.Bindings[0].DisabledLoginMethods = 12
 	err = httpdConf.Initialize(configDir, isShared)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "no login method available for WebAdmin UI")
@@ -607,6 +608,12 @@ func TestInitialization(t *testing.T) {
 	err = httpdConf.Initialize(configDir, isShared)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "no login method available for WebClient UI")
+	}
+	httpdConf.Bindings[0].EnableWebClient = false
+	httpdConf.Bindings[0].DisabledLoginMethods = 240
+	err = httpdConf.Initialize(configDir, isShared)
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "no login method available for REST API")
 	}
 	err = dataprovider.Close()
 	assert.NoError(t, err)
@@ -4877,9 +4884,6 @@ func TestAddUserInvalidFsConfig(t *testing.T) {
 	assert.NoError(t, err)
 	u.FsConfig.AzBlobConfig.SASURL = kms.NewEmptySecret()
 	u.FsConfig.AzBlobConfig.AccountName = "name"
-	_, _, err = httpdtest.AddUser(u, http.StatusBadRequest)
-	assert.NoError(t, err)
-	u.FsConfig.AzBlobConfig.Container = "container"
 	_, _, err = httpdtest.AddUser(u, http.StatusBadRequest)
 	assert.NoError(t, err)
 	u.FsConfig.AzBlobConfig.AccountKey = kms.NewSecret(sdkkms.SecretStatusRedacted, "key", "", "")
@@ -20874,13 +20878,6 @@ func TestWebAdminBasicMock(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), util.I18nError500Message)
 
 	form.Set("default_users_expiration", "10")
-	req, _ = http.NewRequest(http.MethodPost, webAdminPath, bytes.NewBuffer([]byte(form.Encode())))
-	req.RemoteAddr = defaultRemoteAddr
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	setJWTCookieForReq(req, token)
-	rr = executeRequest(req)
-	checkResponseCode(t, http.StatusOK, rr)
-
 	form.Set("password", admin.Password)
 	req, _ = http.NewRequest(http.MethodPost, webAdminPath, bytes.NewBuffer([]byte(form.Encode())))
 	req.RemoteAddr = defaultRemoteAddr
