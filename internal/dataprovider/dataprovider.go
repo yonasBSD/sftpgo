@@ -3700,7 +3700,8 @@ func comparePbkdf2PasswordAndHash(password, hashedPassword string) (bool, error)
 }
 
 func getSSLMode() string {
-	if config.Driver == PGSQLDataProviderName || config.Driver == CockroachDataProviderName {
+	switch config.Driver {
+	case PGSQLDataProviderName, CockroachDataProviderName:
 		switch config.SSLMode {
 		case 0:
 			return "disable"
@@ -3715,7 +3716,7 @@ func getSSLMode() string {
 		case 5:
 			return "allow"
 		}
-	} else if config.Driver == MySQLDataProviderName {
+	case MySQLDataProviderName:
 		if config.requireCustomTLSForMySQL() {
 			return "custom"
 		}
@@ -4242,18 +4243,19 @@ func executePreLoginHook(username, loginMethod, ip, protocol string, oidcTokenFi
 		u.Filters.TOTPConfig = totpConfig
 		u.Filters.RecoveryCodes = recoveryCodes
 		err = provider.updateUser(&u)
-		if err == nil {
-			webDAVUsersCache.swap(&u, "")
-		}
 	}
 	if err != nil {
 		return u, err
 	}
-	providerLog(logger.LevelDebug, "user %q added/updated from pre-login hook response, id: %d", username, userID)
-	if userID == 0 {
-		return provider.userExists(username, "")
+	user, err := provider.userExists(username, "")
+	if err != nil {
+		return u, err
 	}
-	return u, nil
+	providerLog(logger.LevelDebug, "user %q added/updated from pre-login hook response, id: %d", username, userID)
+	if userID > 0 {
+		webDAVUsersCache.swap(&user, "")
+	}
+	return user, nil
 }
 
 // ExecutePostLoginHook executes the post login hook if defined
